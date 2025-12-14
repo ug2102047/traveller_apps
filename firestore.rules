@@ -1,0 +1,428 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helpers
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+    // Admin determined by custom claim `admin: true`
+    function isAdmin() {
+      return request.auth != null && request.auth.token.admin == true;
+    }
+
+    function isValidPaymentMethod(m) {
+      return m in ['bKash', 'Nagad'];
+    }
+    function isValidPaymentStatus(s) {
+      return s in ['pending','partial', 'paid', 'cancelled', 'refunded'];
+    }
+
+    function validBookingCreate() {
+      return
+        request.resource.data.userId == request.auth.uid
+        && request.resource.data.userId is string
+        && request.resource.data.placeId is string
+        && request.resource.data.totalAmount is number
+        && request.resource.data.totalAmount > 0
+        && request.resource.data.paidAmount is number
+        && request.resource.data.paidAmount >= 0
+        && request.resource.data.paidAmount <= request.resource.data.totalAmount
+        && isValidPaymentMethod(request.resource.data.paymentMethod)
+        && isValidPaymentStatus(request.resource.data.paymentStatus)
+        && request.resource.data.created_at is timestamp
+        && (
+             request.resource.data.paymentStatus != 'partial'
+             || request.resource.data.paidAmount >= (request.resource.data.totalAmount * 0.20)
+           );
+    }
+
+    match /bookings/{bookingId} {
+      allow create: if isSignedIn() && validBookingCreate();
+      allow read: if isOwner(resource.data.userId) || isAdmin();
+      allow update: if isAdmin()
+                   || (isOwner(resource.data.userId)
+                      && request.resource.data.userId == resource.data.userId
+                      && request.resource.data.placeId == resource.data.placeId
+                      && request.resource.data.paymentMethod == resource.data.paymentMethod
+                      && request.resource.data.paymentStatus == resource.data.paymentStatus
+                      && request.resource.data.paidAmount == resource.data.paidAmount
+                      && request.resource.data.totalAmount == resource.data.totalAmount
+                      && request.resource.data.created_at == resource.data.created_at
+                     );
+      allow delete: if isAdmin();
+    }
+
+    match /notifications/{nid} {
+      allow create: if isSignedIn()
+                    && (request.resource.data.userId == request.auth.uid || isAdmin())
+                    && request.resource.data.userId is string
+                    && request.resource.data.type is string
+                    && request.resource.data.message is string
+                    && request.resource.data.created_at is timestamp;
+      allow read: if isAdmin();
+      allow update, delete: if isAdmin();
+    }
+
+    // minimal other collections for safety
+    match /reviews/{rid} { allow create: if isSignedIn(); allow read: if true; allow update, delete: if false; }
+    match /wishlists/{wid} { allow create: if isSignedIn(); allow read: if isSignedIn(); allow delete: if isSignedIn(); }
+
+    match /{document=**} { allow read: if false; allow write: if false; }
+  }
+}
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helpers
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+    // Admin determined by custom claim `admin: true`
+    function isAdmin() {
+      return request.auth != null && request.auth.token.admin == true;
+    }
+
+    // Allowed payment methods and statuses
+    function isValidPaymentMethod(m) {
+      return m in ['bKash', 'Nagad'];
+    }
+    function isValidPaymentStatus(s) {
+      return s in ['partial', 'paid', 'cancelled', 'refunded'];
+    }
+
+    // Booking create validation:
+    // - userId must equal auth.uid
+    // - required fields exist and are correct types
+    // - numeric checks: totalAmount > 0, 0 <= paidAmount <= totalAmount
+    // - if partial payment, require at least 20% paid
+    function validBookingCreate() {
+      return
+        request.resource.data.userId == request.auth.uid
+        && request.resource.data.userId is string
+        && request.resource.data.placeId is string
+        && request.resource.data.totalAmount is number
+        && request.resource.data.totalAmount > 0
+        && request.resource.data.paidAmount is number
+        && request.resource.data.paidAmount >= 0
+        && request.resource.data.paidAmount <= request.resource.data.totalAmount
+        && isValidPaymentMethod(request.resource.data.paymentMethod)
+        && isValidPaymentStatus(request.resource.data.paymentStatus)
+        // created_at must be a timestamp (allow serverTimestamp too)
+        && request.resource.data.created_at is timestamp
+        // If partial, ensure at least 20% advance paid
+        && (
+             request.resource.data.paymentStatus != 'partial'
+             || request.resource.data.paidAmount >= (request.resource.data.totalAmount * 0.20)
+           );
+    }
+
+    // Bookings collection rules
+    match /bookings/{bookingId} {
+      // Create: authenticated user may create booking for themselves with validated payload
+      allow create: if isSignedIn() && validBookingCreate();
+
+      // Read: owner or admin only
+      allow read: if isOwner(resource.data.userId) || isAdmin();
+
+      // Update:
+      // - Admin can update any booking (confirm/cancel/refund, change paidAmount, etc.)
+      // - Owner can update only non-protected fields and must not change payment-related fields nor user/place association nor created_at.
+      //
+      // Protected fields that owners cannot change:
+      //   userId, placeId, paymentMethod, paymentStatus, paidAmount, totalAmount, created_at
+      allow update: if isAdmin()
+                   || (isOwner(resource.data.userId)
+                      // userId must stay the same
+                      && request.resource.data.userId == resource.data.userId
+                      // place stays the same
+                      && request.resource.data.placeId == resource.data.placeId
+                      // payment fields must not be altered by owner
+                      && request.resource.data.paymentMethod == resource.data.paymentMethod
+                      && request.resource.data.paymentStatus == resource.data.paymentStatus
+                      && request.resource.data.paidAmount == resource.data.paidAmount
+                      && request.resource.data.totalAmount == resource.data.totalAmount
+                      // created_at must not change
+                      && request.resource.data.created_at == resource.data.created_at
+                     );
+
+      // Delete: admin only
+      allow delete: if isAdmin();
+    }
+
+    // Notifications (used to request server/email work)
+    match /notifications/{nid} {
+      // Clients may create notification requests only for themselves (or admin may create)
+      allow create: if isSignedIn()
+                    && (request.resource.data.userId == request.auth.uid || isAdmin())
+                    && request.resource.data.userId is string
+                    && request.resource.data.type is string
+                    && request.resource.data.message is string
+                    && request.resource.data.created_at is timestamp;
+      // Read: admin only
+      allow read: if isAdmin();
+      allow update, delete: if isAdmin();
+    }
+
+    // Reviews: allow create (with validation) and public read
+    match /reviews/{rid} {
+      allow create: if isSignedIn()
+                    && request.resource.data.userId == request.auth.uid
+                    && request.resource.data.rating is int
+                    && request.resource.data.rating >= 1
+                    && request.resource.data.rating <= 5
+                    && request.resource.data.target is string
+                    && request.resource.data.targetType is string
+                    && request.resource.data.comment is string
+                    && request.resource.data.created_at is timestamp;
+      allow read: if true;
+      allow update, delete: if false;
+    }
+
+    // Wishlists: owner-only read/create/delete
+    match /wishlists/{wid} {
+      allow create: if isSignedIn()
+                    && request.resource.data.userId == request.auth.uid
+                    && request.resource.data.targetId is string
+                    && request.resource.data.targetType is string
+                    && request.resource.data.name is string
+                    && request.resource.data.created_at is timestamp;
+      allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow update: if false;
+    }
+
+    // Ratings (aggregates): read public, writes only admin/server
+    match /ratings/{tid} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Users: permit users to manage their own profile doc
+    match /users/{uid} {
+      allow read: if isSignedIn() && (request.auth.uid == uid || isAdmin());
+      allow create: if isSignedIn() && request.auth.uid == uid;
+      allow update: if isSignedIn() && request.auth.uid == uid;
+      allow delete: if false;
+    }
+
+    // Contacts/messages (development-mode rules; tighten for production if needed)
+    match /contacts/{contactId} {
+      allow create: if isSignedIn()
+                    && request.resource.data.userId == request.auth.uid
+                    && request.resource.data.subject is string
+                    && request.resource.data.created_at is timestamp;
+      allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow update: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow delete: if isAdmin();
+
+      match /messages/{messageId} {
+        allow create: if isSignedIn()
+                      && request.resource.data.senderId == request.auth.uid
+                      && request.resource.data.text is string
+                      && request.resource.data.created_at is timestamp;
+        allow read: if isSignedIn() && (resource.data.userId == request.resource.data.threadOwner || isAdmin());
+        allow update, delete: if false;
+      }
+    }
+
+    // Default: deny reads/writes unless matched above
+    match /{document=**} {
+      allow read: if false;
+      allow write: if false;
+    }
+  }
+}
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Admin determined by custom claim `admin: true` on the user token
+    function isAdmin() {
+      return request.auth != null && request.auth.token.admin == true;
+    }
+
+    // Basic booking validation: ensure required fields exist and types/values make sense
+    function validBookingPayload() {
+      return
+        // minimal required fields (created_at is optional - server can set it)
+        request.resource.data.keys().hasAll(['userId','name','phone','status','paymentMethod','paymentStatus','paidAmount','totalAmount'])
+        // userId must match authenticated uid
+        && request.resource.data.userId == request.auth.uid
+        // types
+        && request.resource.data.name is string
+        && request.resource.data.phone is string
+        && request.resource.data.paidAmount is number
+        && request.resource.data.totalAmount is number
+        // numeric ranges
+        && request.resource.data.paidAmount >= 0
+        && request.resource.data.totalAmount >= request.resource.data.paidAmount
+        // allowed paymentStatus values
+        && request.resource.data.paymentStatus in ['pending','partial','paid','refunded'];
+    }
+
+    match /bookings/{bookingId} {
+      // Allow authenticated users to create bookings when payload is valid
+      allow create: if isSignedIn() && validBookingPayload();
+
+      // Allow anyone to read bookings (adjust as needed for privacy)
+      allow read: if true;
+
+      // Only admin users (custom claim) can update or delete bookings
+      allow update, delete: if isAdmin();
+    }
+
+    match /notifications/{docId} {
+      // Allow authenticated users to create notification requests (for backend to process)
+      allow create: if isSignedIn();
+      allow read: if false;
+      allow update, delete: if isAdmin();
+    }
+
+    // Default: deny everything else unless explicitly allowed above
+    match /{document=**} {
+      allow read: if false;
+      allow write: if false;
+    }
+  }
+}
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helpers
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+    function isAdmin() {
+      return request.auth != null && request.auth.token.admin == true;
+    }
+
+    // Bookings: authenticated users can create bookings for themselves,
+    // read only their bookings (or admin), and update only their own bookings.
+    match /bookings/{bookingId} {
+      allow create: if isSignedIn()
+                    && request.resource.data.userId == request.auth.uid
+                    && request.resource.data.userId is string
+                    && request.resource.data.placeId is string
+                    // optional: ensure created_at provided as timestamp (server timestamp ok)
+                    && request.resource.data.created_at is timestamp;
+      allow read: if isOwner(resource.data.userId) || isAdmin();
+      allow update: if isOwner(resource.data.userId)
+                    && request.resource.data.userId == resource.data.userId;
+      allow delete: if false;
+    }
+
+    // Reviews: authenticated users can create validated reviews (userId must match auth.uid),
+    // everyone can read reviews. No client-side update/delete.
+    match /reviews/{reviewId} {
+      allow create: if isSignedIn()
+                    && request.resource.data.userId == request.auth.uid
+                    // rating: integer 1..5
+                    && request.resource.data.rating is int
+                    && request.resource.data.rating >= 1
+                    && request.resource.data.rating <= 5
+                    // target/targetType existence
+                    && request.resource.data.target is string
+                    && request.resource.data.target.size() > 0
+                    && request.resource.data.targetType is string
+                    // comment string and length-bound
+                    && request.resource.data.comment is string
+                    && request.resource.data.comment.size() <= 2000
+                    // created_at timestamp (serverTimestamp resolves to timestamp)
+                    && request.resource.data.created_at is timestamp;
+      allow read: if true;
+      allow update: if false;
+      allow delete: if false;
+    }
+
+    // Wishlists: users may create/read/delete their own wishlist documents.
+    // Required fields: userId, targetId, targetType, name, created_at
+    match /wishlists/{wishlistId} {
+      allow create: if isSignedIn()
+                    && request.resource.data.userId == request.auth.uid
+                    && request.resource.data.userId is string
+                    && request.resource.data.targetId is string
+                    && request.resource.data.targetType is string
+                    && request.resource.data.name is string
+                    && request.resource.data.created_at is timestamp;
+      allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow update: if false;
+    }
+
+    // Ratings: aggregates are read-only to clients. Only admin/server may write.
+    match /ratings/{targetId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Users (optional): let users read/write their own profile documents
+    match /users/{userId} {
+      allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow create: if isSignedIn() && request.auth.uid == userId;
+      allow update: if isSignedIn() && request.auth.uid == userId;
+      allow delete: if false;
+    }
+
+    // Default: read allowed, writes denied to avoid accidental client-side writes
+    match /{document=**} {
+      allow read: if true;
+      allow write: if false;
+    }
+    
+    // Contacts: conversation threads. Each document is a thread; messages stored
+    // in subcollection `/contacts/{id}/messages/{msgId}`.
+    match /contacts/{contactId} {
+      // Allow authenticated users to create a thread. Require subject and userId.
+      allow create: if isSignedIn()
+                    && request.resource.data.userId == request.auth.uid
+                    && request.resource.data.userId is string
+                    && request.resource.data.subject is string
+                    && request.resource.data.subject.size() > 0
+                    && request.resource.data.created_at is timestamp;
+
+      // Allow read for threads. (Relaxed for development so both parties can view)
+      // NOTE: For production, restrict this to owners/admins only.
+      allow read: if true;
+
+      // Allow authenticated users to update thread summary fields (development)
+      // NOTE: For production, restrict updates to admins or server-side functions only.
+      allow update: if isSignedIn();
+      allow delete: if isAdmin();
+
+      // Messages subcollection rules
+      match /messages/{messageId} {
+        // Users can add messages as long as they are signed in; enforce that senderId matches auth
+        allow create: if isSignedIn()
+                      && request.resource.data.senderId == request.auth.uid
+                      && request.resource.data.senderId is string
+                      && request.resource.data.text is string
+                      && request.resource.data.text.size() > 0
+                      && request.resource.data.created_at is timestamp;
+
+        // Allow reading messages (relaxed for development).
+        // NOTE: For production, restrict this to the thread owner and admins.
+        allow read: if true;
+
+        // No updates/deletes allowed from client for messages
+        allow update, delete: if false;
+      }
+    }
+  }
+}

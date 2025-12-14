@@ -1,0 +1,13 @@
+{
+  "name": "traveller-functions",
+  "version": "1.0.0",
+  "description": "Cloud Functions for Traveller app (QA + helpers)",
+  "engines": {
+    "node": "18"
+  },
+  "dependencies": {
+    "firebase-admin": "^11.10.1",
+    "firebase-functions": "^5.1.0",
+    "node-fetch": "^2.6.7"
+  }
+}

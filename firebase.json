@@ -1,0 +1,36 @@
+{
+	"firestore": {
+		"rules": "firestore.rules",
+		"indexes": "firestore.indexes.json"
+	},
+	"functions": {
+		"source": "functions"
+	},
+    "emulators": {
+ 		"functions": { "host": "127.0.0.1", "port": 5002 },
+ 		"ui": { "enabled": true, "host": "127.0.0.1", "port": 4002 }
+ 	},
+	"flutter": {
+		"platforms": {
+			"android": {
+				"default": {
+					"projectId": "travellerapp2025",
+					"appId": "1:264827045295:android:716abcb0d2fe6217a11b5a",
+					"fileOutput": "android/app/google-services.json"
+				}
+			},
+			"dart": {
+				"lib/firebase_options.dart": {
+					"projectId": "travellerapp2025",
+					"configurations": {
+						"android": "1:264827045295:android:716abcb0d2fe6217a11b5a",
+						"ios": "1:264827045295:ios:517f4438ecaccc01a11b5a",
+						"macos": "1:264827045295:ios:517f4438ecaccc01a11b5a",
+						"web": "1:264827045295:web:e2f6ce6bccb6ca95a11b5a",
+						"windows": "1:264827045295:web:a1fed636a121c25ea11b5a"
+					}
+				}
+			}
+		}
+	}
+}
