@@ -2,7 +2,7 @@
 
 A comprehensive Flutter mobile application for exploring tourist destinations across Bangladesh. This app helps users discover beautiful places, book hotels, plan tours, and manage their travel experiences.
 
-## 📱 Features
+## 📱 Features 
 
 ### User Features
 - **Explore Destinations**: Browse tourist spots by division, district, and category
