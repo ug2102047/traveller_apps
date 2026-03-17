@@ -54,3 +54,4 @@ try {
 }
 
 // verifyEmail handler removed — email verification uses Firebase built-in flow now.
+
